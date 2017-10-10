@@ -114,6 +114,7 @@ static void *accept_routine( void * )
 	for(;;)
 	{
 		//printf("pid %ld g_readwrite.size %ld\n",getpid(),g_readwrite.size());
+		// 如果工作协程队列为空，就等待1秒或者等再来事件，重试
 		if( g_readwrite.empty() )
 		{
 			printf("empty\n"); //sleep
@@ -129,11 +130,12 @@ static void *accept_routine( void * )
 		socklen_t len = sizeof(addr);
 
 		int fd = co_accept(g_listen_fd, (struct sockaddr *)&addr, &len);
-		if( fd < 0 )
+		if( fd < 0 )// 未就绪，等待下次事件继续处理
 		{
 			struct pollfd pf = { 0 };
 			pf.fd = g_listen_fd;
 			pf.events = (POLLIN|POLLERR|POLLHUP);
+			//　当前运行在accept协程，co_poll会在等待事件的时候交出cpu，回到主进程
 			co_poll( co_get_epoll_ct(),&pf,1,1000 );
 			continue;
 		}
@@ -142,10 +144,12 @@ static void *accept_routine( void * )
 			close( fd );
 			continue;
 		}
+		// 弹出一个协程，去处理新连接
 		SetNonBlock( fd );
 		task_t *co = g_readwrite.top();
 		co->fd = fd;
 		g_readwrite.pop();
+		// 此时执行权会转移到某个线程，直到它交出cpu，当前协程才会再次执行
 		co_resume( co->co );
 	}
 	return 0;

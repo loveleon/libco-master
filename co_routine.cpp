@@ -822,8 +822,9 @@ stCoRoutineEnv_t *co_get_curr_thread_env()
  * */
 void OnPollProcessEvent( stTimeoutItem_t * ap )
 {
+	// 从上面知道，pArg 保存了该事件对应的协程
 	stCoRoutine_t *co = (stCoRoutine_t*)ap->pArg;
-	co_resume( co );
+	co_resume( co );// resume 相应的协程
 }
 
 void OnPollPreparePfn( stTimeoutItem_t * ap,struct epoll_event &e,stTimeoutItemLink_t *active )
@@ -875,13 +876,13 @@ void co_eventloop( stCoEpoll_t *ctx,pfn_co_eventloop_t pfn,void *arg )
 			}
 			else
 			{
-				AddTail( active,item );
+				AddTail( active,item );// 监听到的事件放到 active 链表里
 			}
 		}
 
 
 		unsigned long long now = GetTickMS();
-		TakeAllTimeout( ctx->pTimeout,now,timeout );
+		TakeAllTimeout( ctx->pTimeout,now,timeout );// 超时的事件放到 timeout 链表里
 
 		stTimeoutItem_t *lp = timeout->head;
 		while( lp )
@@ -891,7 +892,7 @@ void co_eventloop( stCoEpoll_t *ctx,pfn_co_eventloop_t pfn,void *arg )
 			lp = lp->pNext;
 		}
 
-		Join<stTimeoutItem_t,stTimeoutItemLink_t>( active,timeout );
+		Join<stTimeoutItem_t,stTimeoutItemLink_t>( active,timeout );// 合并 active 和 timeout 链表
 
 		lp = active->head;
 		while( lp )
@@ -910,7 +911,7 @@ void co_eventloop( stCoEpoll_t *ctx,pfn_co_eventloop_t pfn,void *arg )
 			}
 			if( lp->pfnProcess )
 			{
-				lp->pfnProcess( lp );// 恢复协程处理事件
+				lp->pfnProcess( lp );// 恢复协程处理事件// 一个个拿出来处理，调用 pfnProcess 函数，即 OnPollProcessEvent 函数
 			}
 
 			lp = active->head;
@@ -1020,7 +1021,8 @@ int co_poll_inner( stCoEpoll_t *ctx,struct pollfd fds[], nfds_t nfds, int timeou
 	}
 	memset( arg.pPollItems,0,nfds * sizeof(stPollItem_t) );
 
-	arg.pfnProcess = OnPollProcessEvent;
+	arg.pfnProcess = OnPollProcessEvent;// 当 epoll 事件被触发，就会调用该函数来 resume 相应的协程。
+	// pArg 保存当前的协程，pfnProcess 函数中用该字段来得到需要 resume 的协程对象。
 	arg.pArg = GetCurrCo( co_get_curr_thread_env() );
 	
 	
@@ -1038,6 +1040,7 @@ int co_poll_inner( stCoEpoll_t *ctx,struct pollfd fds[], nfds_t nfds, int timeou
 			ev.data.ptr = arg.pPollItems + i;
 			ev.events = PollEvent2Epoll( fds[i].events );
 
+			// 添加到 epoll 中监听
 			int ret = co_epoll_ctl( epfd,EPOLL_CTL_ADD, fds[i].fd, &ev );
 			if (ret < 0 && errno == EPERM && nfds == 1 && pollfunc != NULL)
 			{
@@ -1058,6 +1061,7 @@ int co_poll_inner( stCoEpoll_t *ctx,struct pollfd fds[], nfds_t nfds, int timeou
 
 	unsigned long long now = GetTickMS();
 	arg.ullExpireTime = now + timeout;
+	// 调用 AddTimeout，由 stCoEpoll_t 管理超时。
 	int ret = AddTimeout( ctx->pTimeout,&arg,now );
 	int iRaiseCnt = 0;
 	if( ret != 0 )
@@ -1070,6 +1074,7 @@ int co_poll_inner( stCoEpoll_t *ctx,struct pollfd fds[], nfds_t nfds, int timeou
 	}
     else
 	{
+		// 让出 cpu，挂起当前协程了。等到 stCoEpoll_t resume 该协程再继续执行下面的指令了
 		co_yield_env( co_get_curr_thread_env() );
 		iRaiseCnt = arg.iRaiseCnt;
 	}
